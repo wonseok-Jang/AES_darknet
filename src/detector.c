@@ -9,6 +9,9 @@
 #include "demo.h"
 #include "option_list.h"
 
+#include <dirent.h>
+#include <stdbool.h>
+
 #ifndef __COMPAR_FN_T
 #define __COMPAR_FN_T
 typedef int (*__compar_fn_t)(const void*, const void*);
@@ -20,6 +23,17 @@ typedef __compar_fn_t comparison_fn_t;
 #include "http_stream.h"
 
 int check_mistakes = 0;
+
+int left_cnts = 0;
+int center_cnts = 0;
+int right_cnts = 0;
+int gt_left_cnt = 0;
+int gt_center_cnt = 0;
+int gt_right_cnt = 0;
+int all_left_cnt = 0;
+int all_center_cnt = 0;
+int all_right_cnt = 0;
+int fr_cnt=0;
 
 static int coco_ids[] = { 1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,23,24,25,27,28,31,32,33,34,35,36,37,38,39,40,41,42,43,44,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,67,70,72,73,74,75,76,77,78,79,80,81,82,84,85,86,87,88,89,90 };
 
@@ -1757,6 +1771,140 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
     free_network(net);
 }
 
+//void aes_test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filename, float thresh,
+ //   float hier_thresh, int dont_show, int ext_output, int save_labels, char *outfile, int letter_box, int benchmark_layers, char *gt_path, char *txt_path)
+void aes_test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filename, float thresh, float hier_thresh, char *outfile, int fullscreen, int letter_box,char *gt_path, char *txt_path)
+{
+    list *options = read_data_cfg(datacfg);
+    char *name_list = option_find_str(options, "names", "data/names.list");
+    char **names = get_labels(name_list);
+    image **alphabet = load_alphabet();
+
+    network net = parse_network_cfg_custom(cfgfile, 1, 1); // set batch=1
+    if (weightfile) {
+        load_weights(&net, weightfile);
+    }
+
+	fuse_conv_batchnorm(net);
+	calculate_binary_weights(net);
+	srand(2222222);
+
+    double time;
+    char buff[256];
+    char *input = buff;
+    float nms=.45;
+
+    char gt_buff[256];
+    char *gt_input = gt_buff;
+
+    char out_buff[256];
+    char *out_p = out_buff;
+
+	opendir(filename);
+
+	struct dirent **namelist;
+	int count;
+	int idx;
+	count=scandir(filename,&namelist,NULL,alphasort);
+    make_window("predictions", 512, 512, 0);
+    FILE* fw;
+    bool txt_flag=false;
+
+    if(txt_path!='\0'){
+        strcat(txt_path,"/result.txt");
+        fw=fopen(txt_path,"w+");// txt make;
+        txt_flag=true;
+	}
+
+	for(idx=0;idx<count;idx++){
+        if(namelist[idx]->d_type==DT_REG){
+	        //time=what_time_is_it_now();
+		    fr_cnt++;//image count
+			strncpy(input, filename, 256);
+			strcat(input,"/");
+			strcat(input,namelist[idx]->d_name);
+	        image im = load_image_color(input,0,0);
+	        image sized = letterbox_image(im, net.w, net.h);
+	        layer l = net.layers[net.n-1];
+
+            strncpy(gt_input, gt_path, 256);
+            strcat(gt_input,"/");
+            strcat(gt_input,namelist[idx]->d_name);
+            strcat(gt_input,"/");
+            char *pos;
+            pos = strrchr(gt_input, '.' );
+            *pos = NULL;
+ 			strcat(gt_input,".txt");
+
+	        float *X = sized.data;
+	        time=what_time_is_it_now();
+
+	        float *prediction = network_predict(net, X);
+
+	        printf("%s: Predicted in %f seconds.\n", input, what_time_is_it_now()-time);
+	   //   printf("%s\n", input);
+	        int nboxes = 0;
+			detection *dets = get_network_boxes(&net, im.w, im.h, thresh, 0, 0, 1, &nboxes, letter_box);
+
+	        if (nms) do_nms_sort(dets, nboxes, l.classes, nms);
+
+            car_cnt cnts;
+			int check_tracking_status;
+
+			check_tracking_status = draw_tracking_detections(im, gt_input, dets, nboxes, thresh, names, alphabet, l.classes, &cnts, txt_path, fr_cnt);
+			if(check_tracking_status == -1) {
+				perror("Error in tracking");
+				exit(0);
+			}
+
+            left_cnts += cnts.left_cnt;
+            center_cnts += cnts.center_cnt;
+            right_cnts += cnts.right_cnt;
+            gt_left_cnt += cnts.gt_left_cnt;
+            gt_center_cnt += cnts.gt_center_cnt;
+            gt_right_cnt += cnts.gt_right_cnt;
+            all_left_cnt += cnts.all_left_cnt;
+            all_center_cnt += cnts.all_center_cnt;
+            all_right_cnt += cnts.all_right_cnt;
+
+            printf("*----Precision [TP/All detections]----*\n");
+            printf("Left   Car : [%d/%d] \n", left_cnts, gt_left_cnt);
+            printf("Center Car : [%d/%d] \n", center_cnts, gt_center_cnt);
+            printf("Right  Car : [%d/%d] \n", right_cnts, gt_right_cnt);
+
+            printf("*----Precision [TP/Al Ground truths]----*\n");
+            printf("Left   Car : [%d/%d] \n", left_cnts, all_left_cnt);
+            printf("Center Car : [%d/%d] \n", center_cnts, all_center_cnt);
+            printf("Right  Car : [%d/%d] \n", right_cnts, all_right_cnt);
+
+	        free_detections(dets, nboxes);
+	        if(outfile){
+		    strncpy(out_p, outfile, 256);
+		    strcat(out_p, "/");
+		    strcat(out_p, namelist[idx]->d_name);
+	            save_image(im, out_p);
+	        }
+	        else{
+	#ifdef OPENCV
+	            show_image(im, "predictions");
+	#endif
+	        }
+	        //printf("%s: Predicted in %f seconds.\n", input, what_time_is_it_now()-time);
+            //fclose(fw);
+	        free_image(im);
+	        free_image(sized);
+	        //if (filename) break;
+			printf("\n\n");
+			free(namelist[idx]);
+		}
+    }
+    if(txt_flag){
+        fclose(fw);
+    }
+
+    free(namelist);
+}
+
 #if defined(OPENCV) && defined(GPU)
 
 // adversarial attack dnn
@@ -1965,6 +2113,10 @@ void run_detector(int argc, char **argv)
     int ext_output = find_arg(argc, argv, "-ext_output");
     int save_labels = find_arg(argc, argv, "-save_labels");
     char* chart_path = find_char_arg(argc, argv, "-chart", 0);
+
+    char *txtpath = find_char_arg(argc, argv,"-txt",0);
+    char *gt_path = (argc > 7) ? argv[7]: 0;
+    int fullscreen = find_arg(argc, argv, "-fullscreen");
     if (argc < 4) {
         fprintf(stderr, "usage: %s %s [train/test/valid/demo/map] [data] [cfg] [weights (optional)]\n", argv[0], argv[1]);
         return;
@@ -2002,6 +2154,7 @@ void run_detector(int argc, char **argv)
         if (strlen(weights) > 0)
             if (weights[strlen(weights) - 1] == 0x0d) weights[strlen(weights) - 1] = 0;
     char *filename = (argc > 6) ? argv[6] : 0;
+    if(0==strcmp(argv[2], "aes_test")) aes_test_detector(datacfg, cfg, weights, filename, thresh, hier_thresh, outfile, fullscreen, letter_box,gt_path, txtpath);
     if (0 == strcmp(argv[2], "test")) test_detector(datacfg, cfg, weights, filename, thresh, hier_thresh, dont_show, ext_output, save_labels, outfile, letter_box, benchmark_layers);
     else if (0 == strcmp(argv[2], "train")) train_detector(datacfg, cfg, weights, gpus, ngpus, clear, dont_show, calc_map, mjpeg_port, show_imgs, benchmark_layers, chart_path);
     else if (0 == strcmp(argv[2], "valid")) validate_detector(datacfg, cfg, weights, outfile);

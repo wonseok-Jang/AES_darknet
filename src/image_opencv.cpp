@@ -443,23 +443,33 @@ static float get_pixel(image m, int x, int y, int c)
 }
 // ----------------------------------------
 
-extern "C" void show_image_cv(image p, const char *name)
-{
-    try {
-        image copy = copy_image(p);
-        constrain_image(copy);
+    extern "C" int show_image_cv(image p, const char *name)
+    {
+//        cv::Mat m = image_to_mat(p);
+//        cv::imshow(name, m);
+//        int c = cv::waitKey(1);
+//        if (c != -1) c = c%256;
 
-        cv::Mat mat = image_to_mat(copy);
-        if (mat.channels() == 3) cv::cvtColor(mat, mat, cv::COLOR_RGB2BGR);
-        else if (mat.channels() == 4) cv::cvtColor(mat, mat, cv::COLOR_RGBA2BGR);
-        cv::namedWindow(name, cv::WINDOW_NORMAL);
-        cv::imshow(name, mat);
-        free_image(copy);
+        try {
+            image copy = copy_image(p);
+            constrain_image(copy);
+
+            cv::Mat mat = image_to_mat(copy);
+            if (mat.channels() == 3) cv::cvtColor(mat, mat, cv::COLOR_RGB2BGR);
+            else if (mat.channels() == 4) cv::cvtColor(mat, mat, cv::COLOR_RGBA2BGR);
+            cv::namedWindow(name, cv::WINDOW_NORMAL);
+            cv::imshow(name, mat);
+            int c = cv::waitKey(1);
+
+            free_image(copy);
+
+            return c;
+        }
+        catch (...) {
+            cerr << "OpenCV exception: show_image_cv \n";
+        }
+        return 1;
     }
-    catch (...) {
-        cerr << "OpenCV exception: show_image_cv \n";
-    }
-}
 // ----------------------------------------
 
 /*

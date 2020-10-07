@@ -10,6 +10,18 @@
 
 #include "image_opencv.h"
 
+#ifndef __cplusplus
+    #ifdef OPENCV
+    #include "opencv2/highgui/highgui_c.h"
+    #include "opencv2/imgproc/imgproc_c.h"
+    #include "opencv2/core/version.hpp"
+    #if CV_MAJOR_VERSION == 3
+    #include "opencv2/videoio/videoio_c.h"
+    #include "opencv2/imgcodecs/imgcodecs_c.h"
+    #endif
+    #endif
+#endif
+
 #include "box.h"
 #ifdef __cplusplus
 extern "C" {
@@ -96,6 +108,15 @@ image **load_alphabet();
 float bilinear_interpolate(image im, float x, float y, int c);
 
 image get_image_layer(image m, int l);
+
+void SWAP(sorting* arr, int a, int b);
+
+void sortCenX(sorting* arr, int m, int n);
+
+int compute_iou(char *gt, int pred_xmin, int pred_ybot, int pred_xmax, int pred_ytop, float check);
+
+int draw_tracking_detections(image im, char *gt_input, detection *dets, int num, float thresh, char **names, image **alphabet, int classes, car_cnt *cnts, char *txt_path, int frame_count);
+
 
 //LIB_API void free_image(image m);
 void test_resize(char *filename);

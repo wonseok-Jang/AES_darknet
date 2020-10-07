@@ -51,6 +51,28 @@ typedef enum { UNUSED_DEF_VAL } UNUSED_ENUM_TYPE;
 extern "C" {
 #endif
 
+typedef struct sorting{
+    int tmp_fr;       
+    int tmp_label;    
+    float tmp_cenX;   
+    float tmp_cenY;    
+    int tmp_wid;
+    int tmp_height;
+    float tmp_conf;
+}sorting;
+
+typedef struct {
+    int left_cnt;
+    int center_cnt;
+    int right_cnt;
+    int gt_left_cnt;
+    int gt_center_cnt;
+    int gt_right_cnt;
+    int all_left_cnt;
+    int all_center_cnt;
+    int all_right_cnt;
+}car_cnt;
+
 struct network;
 typedef struct network network;
 
@@ -1029,6 +1051,8 @@ LIB_API void test_detector(char *datacfg, char *cfgfile, char *weightfile, char 
 LIB_API int network_width(network *net);
 LIB_API int network_height(network *net);
 LIB_API void optimize_picture(network *net, image orig, int max_layer, float scale, float rate, float thresh, int norm);
+
+void aes_test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filename, float thresh, float hier_thresh, char *outfile, int fullscreen, int letter_box,char *gt_path, char *txt_path);
 
 // image.h
 LIB_API void make_image_red(image im);

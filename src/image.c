@@ -6,6 +6,15 @@
 #include "blas.h"
 #include "dark_cuda.h"
 #include <stdio.h>
+
+#include <unistd.h>
+#include <net/if.h>
+#include <sys/types.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <linux/can.h>
+#include <linux/can/raw.h>
+
 #ifndef _USE_MATH_DEFINES
 #define _USE_MATH_DEFINES
 #endif
@@ -19,6 +28,32 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 #endif
+
+#define ARRAY_SIZE 20
+#define __MAX(a,b) (((a)>(b))?(a):(b))
+#define __MIN(a,b) (((a)<(b))?(a):(b))
+
+struct can_frame frames[2][ARRAY_SIZE];
+struct object_info{
+	int left;
+	int right;
+	int top;
+	int bot;
+	int class;
+	int id;
+}object_info[2][ARRAY_SIZE];
+
+char id_array[2][ARRAY_SIZE]={0};
+int prior_object_number=0;
+int frame_index=0;
+int For_Sync=1;
+//int cnt=0;
+//double standard_time=0;
+int sw;
+
+//char *p;
+int curr_timestamp;
+int prev_timestamp;
 
 extern int check_mistakes;
 //int windows = 0;
@@ -324,6 +359,451 @@ int compare_by_probs(const void *a_ptr, const void *b_ptr) {
     const detection_with_class* b = (detection_with_class*)b_ptr;
     float delta = a->det.prob[a->best_class] - b->det.prob[b->best_class];
     return delta < 0 ? -1 : delta > 0 ? 1 : 0;
+}
+
+void SWAP(sorting* arr, int a, int b){
+    sorting temp;
+    temp=arr[a];
+    arr[a]=arr[b];
+    arr[b]=temp;
+}
+
+void sortCenX(sorting* arr, int m, int n){
+    if(m<n){
+        int key = m;
+        int i = m + 1;
+        int j = n;
+        while(i <= j){
+            while(i<=n && arr[i].tmp_cenX <= arr[key].tmp_cenX){
+                i++;
+            }
+            while(j>m && arr[j].tmp_cenX >= arr[key].tmp_cenX){
+                j--;
+            }
+            if(i > j){
+                SWAP(arr, j, key);
+            }
+            else{
+                SWAP(arr, i, j);
+            }
+        }
+        sortCenX(arr, m, j-1);
+        sortCenX(arr, j+1, n);
+    }
+}
+
+int compute_iou(char *gt, int pred_xmin, int pred_ybot, int pred_xmax, int pred_ytop, float check){
+
+    bool ok_cnt = false;
+    int img_width = 1280;
+    int img_height = 960;
+
+	float gt_a = atof(*gt);
+	float gt_b = atof(*(gt + 1));
+	float gt_c = atof(*(gt + 2));
+	float gt_d = atof(*(gt + 3));
+
+	printf("gt_a: %f\n", gt_a);
+	printf("gt_a check: %f\n", check);
+
+    int gt_bbox_w = (int)(gt_c * img_width);
+    int gt_bbox_h = (int)(gt_d * img_height);
+    int gt_xmin = (int)((gt_a*img_width) - (gt_bbox_w/2));
+    int gt_ybot = (int)((gt_b * img_height) + gt_bbox_h/2);
+    int gt_xmax = (int)(gt_xmin + gt_bbox_w);
+    int gt_ytop = (int)(gt_ybot - gt_bbox_h);
+
+    int inter_area;
+    float iou = 0.0;
+    int x_a = __MAX(gt_xmin, pred_xmin);
+    int y_a = __MIN(gt_ybot, pred_ybot);
+    int x_b = __MIN(gt_xmax, pred_xmax);
+    int y_b = __MAX(gt_ytop, pred_ytop);
+
+    if (((x_b - x_a) > 0) && (y_a - y_b) > 0){
+        inter_area = abs((x_b - x_a)) * abs((y_a - y_b));
+        int gt_area = (gt_xmax - gt_xmin) * (gt_ybot -gt_ytop);
+        int pred_area = (pred_xmax - pred_xmin) * (pred_ybot - pred_ytop);
+        iou = (float) inter_area / (gt_area + pred_area - inter_area);
+    }
+    if (iou >= 0.5){
+        ok_cnt = true;
+    }
+    return ok_cnt;
+}
+
+
+
+int draw_tracking_detections(image im, char *gt_input, detection *dets, int num, float thresh, char **names, image **alphabet, int classes, car_cnt *cnts, char *txt_path, int frame_count)
+{
+    bool txt_flag=false;
+    FILE* fw1;
+	int i,j;
+    int box_cnt=0;
+
+    if(txt_path!='\0'){
+        fw1=fopen(txt_path,"a");// txt make;
+        txt_flag=true;
+    }
+
+    sorting s[20];
+
+    // For Carla mAP test -----------------------------
+    int keep = 0;
+    char *keep_ary[10] = {NULL,};
+    char *p_gt_input = strtok(gt_input, "/");
+
+    while(p_gt_input!=NULL){
+        keep_ary[keep] = p_gt_input;
+        keep++;
+        p_gt_input = strtok(NULL, "/");
+    }
+
+    char dest[100] = "/mnt/hdd2/darknet/sanjabu/carla_result_text/";
+    /////////strcat(dest, keep_ary[keep-1]);
+    //printf("%s\n", dest);
+    FILE *fp2 = fopen(dest, "a"); // For Carla mAP test
+    // For Carla mAP test -----------------------------*
+
+	// Read GT files.
+	bool gt_flag = true;
+	FILE *fp;
+	if ((fp = fopen(gt_input, "r")) == NULL){
+		gt_flag = false;
+	}
+	char pred_box[3][5][20];
+	int label_cnt = 0;
+
+	if(gt_flag == true){
+		char text[256];
+		char fuc[3][50];
+		for(int i = 0; i < 3; i++){
+			if(fgets(text, sizeof(text), fp) == NULL) break;
+			else{
+				label_cnt += 1;
+				strcpy(fuc[i],text);
+			}
+		}
+		for(int i = 0; i < label_cnt; i++){
+			char *input_ptr = strtok(fuc[i], " ");
+			int k = 0;
+			while (input_ptr != NULL)
+			{
+				strcpy(pred_box[i][k], input_ptr);
+				k = k + 1;
+				input_ptr = strtok(NULL, " ");
+			}
+		}
+
+		fclose(fp);
+	}
+
+	char str_tmp[1024];
+	FILE *Image_time_File=fopen("FrontLeft.txt","r");
+
+	//CAN COMMUNICATION variables
+	int FVR=0;
+	int FVI=0;
+	int FVL=0;
+	//int sr;
+	struct sockaddr_can addr;
+
+	struct can_frame frame;
+	struct ifreq ifr;
+	const char *ifname="can0";
+	frame.can_dlc=8;
+	//frame.can_id=0x000;
+	for(int k = 0; k < frame.can_dlc; k++)
+		frame.data[k] = 0x00;
+	for(int k = 0; k < ARRAY_SIZE; k++){
+		id_array[frame_index][k] = 0;
+		object_info[frame_index][k].left = 0;
+		object_info[frame_index][k].right = 0;
+		object_info[frame_index][k].top = 0;
+		object_info[frame_index][k].bot = 0;
+		object_info[frame_index][k].class = 0;
+		object_info[frame_index][k].id = 99;
+	}
+
+	//object tracking
+	int now_object_number = 0;
+
+#ifdef CAN
+	if(For_Sync){
+		if((sw=socket(PF_CAN,SOCK_RAW,CAN_RAW))<0){
+			perror("Error while opening socket");
+			return -1;
+		}
+		strcpy(ifr.ifr_name,ifname);
+		ioctl(sw, SIOCGIFINDEX,&ifr);
+		addr.can_family=AF_CAN;
+		addr.can_ifindex=ifr.ifr_ifindex;
+		if(bind(sw,(struct sockaddr *)&addr,sizeof(addr))<0) {
+			perror("Error in socket bind");
+			return -1;
+		}
+		For_Sync=0;
+	}
+#endif
+
+	frame.can_dlc = 8;
+	//car_cnt cnts;
+	cnts->gt_left_cnt = 0;
+	cnts->gt_center_cnt = 0;
+	cnts->gt_right_cnt = 0;
+	cnts->left_cnt = 0;
+	cnts->center_cnt = 0;
+	cnts->right_cnt = 0;
+	cnts->all_left_cnt = 0;
+	cnts->all_center_cnt = 0;
+	cnts->all_right_cnt = 0;
+
+	if (gt_flag == true){
+		// Count GT
+		for(int k = 0; k < label_cnt; k++){
+			if (atoi(pred_box[k][0]) == 0){
+				cnts->gt_left_cnt = 1;
+			} else if (atoi(pred_box[k][0]) == 1){
+				cnts->gt_center_cnt = 1;
+			} else if (atoi(pred_box[k][0]) == 2){
+				cnts->gt_right_cnt = 1;
+			}
+		}
+	}
+	for(i = 0; i < num; ++i){ //num=nboxes
+		char labelstr[4096] = {0};
+		int class = -1;
+		float confidence;
+
+		for(j = 0; j < classes; ++j){ //classes = demo_classes(80 or 8)
+			if (dets[i].prob[j] > thresh){
+				if (class < 0) {
+					strcat(labelstr, names[j]);
+					class = j;
+				}
+                confidence = dets[i].prob[j];
+				printf("%s: %.0f%%\n", names[j], dets[i].prob[j]*100);	
+			}
+		}
+
+
+		if(class >= 0){
+			int width = im.h * .006;
+			int offset = class * 123457 % classes;
+			float red = get_color(2, offset,classes);
+			float green = get_color(1, offset,classes);
+			float blue = get_color(0, offset,classes);
+			float rgb[3];
+
+			rgb[0] = red;
+			rgb[1] = green;
+			rgb[2] = blue;
+			box b = dets[i].bbox;
+
+			int left  = (b.x - b.w/2.) * im.w;
+			int right = (b.x + b.w/2.) * im.w;
+			int top   = (b.y - b.h/2.) * im.h;
+			int bot   = (b.y + b.h/2.) * im.h;
+
+			if(left < 0) left = 0;
+			if(right > im.w-1) right = im.w - 1;
+			if(top < 0) top = 0;
+			if(bot > im.h-1) bot = im.h - 1;
+
+			if (strcmp(labelstr, "FVL") == 0 || strcmp(labelstr, "FVI") == 0 || strcmp(labelstr, "FVR") == 0 || strcmp(labelstr, "truck") == 0 || strcmp(labelstr, "bus") == 0){
+				char class_name[10] = "vehicle";
+            } 
+			else if (strcmp(labelstr, "person") == 0){
+			}
+
+			if (gt_flag == true){
+				bool left_check = false;
+				bool center_check = false;
+				bool right_check = false;
+				for(int k = 0; k < label_cnt; k++){
+					if (strcmp(labelstr, "left_car") == 0 && atoi(pred_box[k][0]) == 0){
+						if (left_check == false){
+							cnts->all_left_cnt = 1;
+//							left_check = compute_iou(atof(pred_box[k][1]), atof(pred_box[k][2]), atof(pred_box[k][3]), atof(pred_box[k][4]), left, bot, right, top);
+//							if (left_check == true){
+//								cnts->left_cnt = 1;
+//							}
+							if (compute_iou((pred_box + k), left, bot, right, top, atof(pred_box[k][1])) == 1)
+								cnts->left_cnt = 1;
+						}
+					} else if (strcmp(labelstr, "center_car") == 0 && atoi(pred_box[k][0]) == 1){
+						if (center_check == false){
+							cnts->all_center_cnt = 1;
+//							center_check = compute_iou(atof(pred_box[k][1]), atof(pred_box[k][2]), atof(pred_box[k][3]), atof(pred_box[k][4]), left, bot, right, top);
+//							if (center_check == true){
+//								cnts->center_cnt = 1;
+//							}
+							if (compute_iou((pred_box + k), left, bot, right, top, atof(pred_box[k][1])) == 1)
+								cnts->center_cnt = 1;
+						}
+					} else if (strcmp(labelstr, "right_car") == 0 && atoi(pred_box[k][0]) == 2){
+						if (right_check == false){
+							cnts->all_right_cnt = 1;
+//							right_check = compute_iou(atof(pred_box[k][1]), atof(pred_box[k][2]), atof(pred_box[k][3]), atof(pred_box[k][4]), left, bot, right, top);
+//							if (right_check == true){
+//								cnts->right_cnt = 1;
+//							}
+							if (compute_iou((pred_box + k), left, bot, right, top, atof(pred_box[k][1])) == 1)
+								cnts->right_cnt = 1;
+						}
+					}
+				}
+			}
+			//            exit(0);
+			//object tracking start//
+			float iou = 0;
+			float max_iou = 0.4;
+			int need_new_id = 1;	
+
+			for(int k = 0; k < prior_object_number; k++){
+				if(object_info[(frame_index + 1) % 2][k].class == class){
+					int x1 = __MAX(left, object_info[(frame_index + 1) % 2][k].left);	
+					int y1 = __MAX(top, object_info[(frame_index + 1) % 2][k].top);	
+					int x2 = __MIN(right, object_info[(frame_index + 1) % 2][k].right);	
+					int y2 = __MIN(bot, object_info[(frame_index + 1) % 2][k].bot);	
+					int area_intersection = (x2 - x1) * (y2 - y1);
+					int area_box1 = (object_info[(frame_index + 1) % 2][k].right - object_info[(frame_index + 1) % 2][k].left) * (object_info[(frame_index + 1) % 2][k].bot - object_info[(frame_index + 1) % 2][k].top);
+					int area_box2 = (right - left) * (bot - top);
+					iou = (float)area_intersection / (area_box1+area_box2-area_intersection);
+					//					printf("now class %d is same with object_info[%d][%d].class %d\n",class,(frame_index+1)%2,k,object_info[(frame_index+1)%2][k].class);
+					//					printf("left %d, prior left %d, x1 %d\n",left,object_info[(frame_index+1)%2][k].left,x1);
+					//					printf("top %d, prior top %d, y1 %d\n",top,object_info[(frame_index+1)%2][k].top,y1);
+					//					printf("right %d, prior right %d, x2 %d\n",right,object_info[(frame_index+1)%2][k].right,x2);
+					//					printf("bot %d, prior bot %d, y2 %d\n",bot,object_info[(frame_index+1)%2][k].bot,y2);
+					//					printf("x1 %d, y1 %d, x2 %d, y2 %d, iou : %f \n",x1,y1,x2,y2,iou);
+					if(iou > max_iou){
+						max_iou = iou;
+						frame.can_id = object_info[(frame_index + 1) % 2][k].id;
+						need_new_id = 0;
+						//id_array[frame_index][frame.can_id]=1;
+						id_array[frame_index][frame.can_id - 68] = 1;
+					}
+				}
+			}
+			if(need_new_id){
+				for(int k = 0; k < ARRAY_SIZE; k++){
+					if(!id_array[(frame_index + 1) % 2][k])	{
+						//frame.can_id=k;
+						frame.can_id = k + 68;
+						id_array[frame_index][frame.can_id - 68] = 1;
+						//id_array[frame_index][frame.can_id]=1;
+						id_array[(frame_index + 1) % 2][frame.can_id - 68] = 1;
+						//id_array[(frame_index+1)%2][frame.can_id]=1;
+						break;
+					}
+				}
+			}
+			char _can_id[256];
+			sprintf(_can_id,"_%d",frame.can_id-68);
+			strcat(labelstr, _can_id);
+			//object tracking end//
+
+			int trans_left = left/2;
+			int trans_right = right/2;
+			int trans_top = top/2;
+			int trans_bot = bot/2;
+
+			frame.data[0] = (trans_left << 6) | FVR;
+			frame.data[1] = trans_left >> 2;
+			frame.data[2] = (trans_top << 7) | FVI;
+			frame.data[3] = trans_top >> 1;
+			frame.data[4] = ((trans_right - trans_left) << 6) | FVL;
+			frame.data[5] = (trans_right - trans_left) >> 2;
+			frame.data[6] = ((trans_bot - trans_top) << 7) | (class);
+			frame.data[7] = (trans_bot - trans_top) >> 1;
+
+			//write(sw,&frame,sizeof(struct can_frame));
+#ifdef CAN
+			if(can_send("can0", &frame) == -1) {
+				perror("Error CAN send");
+				return -1;
+			}
+#endif
+
+			object_info[frame_index][now_object_number].left = left;			
+			object_info[frame_index][now_object_number].right = right;		
+			object_info[frame_index][now_object_number].top = top;
+			object_info[frame_index][now_object_number].bot = bot;	
+			object_info[frame_index][now_object_number].class = class;		
+			object_info[frame_index][now_object_number].id = frame.can_id;		
+			now_object_number++;
+
+			// SOCKET CAN COMMUNICATION end //
+
+			draw_box_width(im, left, top, right, bot, width, red, green, blue);
+			if (alphabet){
+				//image label = get_label(alphabet, labelstr, (im.h*.03));
+				//draw_label(im, top + width, left, label, rgb);
+
+				image label = get_label_v3(alphabet, labelstr, (im.h*.02));
+				draw_weighted_label(im, top + width, left, label, rgb, 0.7);
+
+				free_image(label);
+			}
+			if (dets[i].mask){
+				image mask = float_to_image(14, 14, 1, dets[i].mask);
+				image resized_mask = resize_image(mask, b.w*im.w, b.h*im.h);
+				image tmask = threshold_image(resized_mask, .5);
+				embed_image(tmask, im, left, top);
+				free_image(mask);
+				free_image(resized_mask);
+				free_image(tmask);
+			}
+			if (box_cnt<20){
+				s[box_cnt].tmp_fr=frame_count;
+				s[box_cnt].tmp_label=class;
+				s[box_cnt].tmp_cenX=(float)(left+right)/2;
+				s[box_cnt].tmp_cenY=(float)(top+bot)/2;
+				s[box_cnt].tmp_wid=(right-left);
+				s[box_cnt].tmp_height=(bot-top);
+				s[box_cnt].tmp_conf=confidence;
+				box_cnt++;
+			}
+		} // end(class >=0)
+	} // end(i < num(nboxes)) 
+
+    sortCenX(s, 0, box_cnt - 1);
+    if(txt_flag){
+        for(int k=0; k<box_cnt; k++){
+            fprintf(fw1,"%d %d %d %.1f %.1f %d %d %f\n",s[k].tmp_fr,k+1,s[k].tmp_label,s[k].tmp_cenX,s[k].tmp_cenY,s[k].tmp_wid,s[k].tmp_height,s[k].tmp_conf);
+        }
+        if((20 - box_cnt) > 0){
+                for(int i=0; i< (20 - box_cnt); i++){
+                    fprintf(fw1,"%d 0 0 0 0 0 0 0\n", frame_count);
+                }
+        }
+        fclose(fw1);
+    }
+
+	prior_object_number = now_object_number;
+
+#ifdef CAN
+	for(int k=0;k<ARRAY_SIZE;k++){
+		if(!id_array[frame_index][k]){
+
+			frame.can_id = k+68;
+			//frame.can_id=k;
+			frame.can_dlc = 8;
+			for(int z=0; z<frame.can_dlc; z++)
+				frame.data[z] = 0x00;
+			//write(sw,&frame,sizeof(struct can_frame));
+			if(can_send("can0", &frame) == -1) {
+				perror("Error CAN send");
+				return -1;
+			}
+
+			usleep(2);
+		}
+	}
+#endif
+	frame_index = (frame_index + 1) % 2;
+
+	return 1;
 }
 
 void draw_detections_v3(image im, detection *dets, int num, float thresh, char **names, image **alphabet, int classes, int ext_output)
@@ -997,14 +1477,17 @@ image letterbox_image(image im, int w, int h)
 {
     int new_w = im.w;
     int new_h = im.h;
-    if (((float)w / im.w) < ((float)h / im.h)) {
-        new_w = w;
-        new_h = (im.h * w) / im.w;
-    }
-    else {
-        new_h = h;
-        new_w = (im.w * h) / im.h;
-    }
+//    if (((float)w / im.w) < ((float)h / im.h)) {
+//        new_w = w;
+//        new_h = (im.h * w) / im.w;
+//    }
+//    else {
+//        new_h = h;
+//        new_w = (im.w * h) / im.h;
+//    }
+	new_w = w;
+	new_h = h;
+
     image resized = resize_image(im, new_w, new_h);
     image boxed = make_image(w, h, im.c);
     fill_image(boxed, .5);
