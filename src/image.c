@@ -403,8 +403,8 @@ int compute_iou(char *gt, int pred_xmin, int pred_ybot, int pred_xmax, int pred_
 	float gt_c = atof(*(gt + 2));
 	float gt_d = atof(*(gt + 3));
 
-	printf("gt_a: %f\n", gt_a);
-	printf("gt_a check: %f\n", check);
+//	printf("gt_a: %f\n", gt_a);
+//	printf("gt_a check: %f\n", check);
 
     int gt_bbox_w = (int)(gt_c * img_width);
     int gt_bbox_h = (int)(gt_d * img_height);
@@ -431,8 +431,6 @@ int compute_iou(char *gt, int pred_xmin, int pred_ybot, int pred_xmax, int pred_
     }
     return ok_cnt;
 }
-
-
 
 int draw_tracking_detections(image im, char *gt_input, detection *dets, int num, float thresh, char **names, image **alphabet, int classes, car_cnt *cnts, char *txt_path, int frame_count)
 {
@@ -737,11 +735,11 @@ int draw_tracking_detections(image im, char *gt_input, detection *dets, int num,
 
 			draw_box_width(im, left, top, right, bot, width, red, green, blue);
 			if (alphabet){
-				//image label = get_label(alphabet, labelstr, (im.h*.03));
-				//draw_label(im, top + width, left, label, rgb);
+				image label = get_label(alphabet, labelstr, (im.h*.03)/10);
+				draw_label(im, top + width, left, label, rgb);
 
-				image label = get_label_v3(alphabet, labelstr, (im.h*.02));
-				draw_weighted_label(im, top + width, left, label, rgb, 0.7);
+				//image label = get_label_v3(alphabet, labelstr, (im.h*.02));
+				//draw_weighted_label(im, top + width, left, label, rgb, 0.7);
 
 				free_image(label);
 			}
@@ -1460,14 +1458,17 @@ void letterbox_image_into(image im, int w, int h, image boxed)
 {
     int new_w = im.w;
     int new_h = im.h;
-    if (((float)w / im.w) < ((float)h / im.h)) {
-        new_w = w;
-        new_h = (im.h * w) / im.w;
-    }
-    else {
-        new_h = h;
-        new_w = (im.w * h) / im.h;
-    }
+//    if (((float)w / im.w) < ((float)h / im.h)) {
+//        new_w = w;
+//        new_h = (im.h * w) / im.w;
+//    }
+//    else {
+//        new_h = h;
+//        new_w = (im.w * h) / im.h;
+//    }
+	new_w = w;
+	new_h = h;
+
     image resized = resize_image(im, new_w, new_h);
     embed_image(resized, boxed, (w - new_w) / 2, (h - new_h) / 2);
     free_image(resized);
