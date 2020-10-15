@@ -267,6 +267,7 @@ extern "C" mat_cv *image_to_ipl(image im)
 }
 // ----------------------------------------
 
+
 extern "C" image ipl_to_image(mat_cv* src_ptr)
 {
     IplImage* src = (IplImage*)src_ptr;
@@ -304,6 +305,34 @@ IplImage *mat_to_ipl(cv::Mat mat)
 }
 // ----------------------------------------
 */
+
+void ipl_into_image(IplImage* src, image im)
+{
+    unsigned char *data = (unsigned char *)src->imageData;
+    int h = src->height;
+    int w = src->width;
+    int c = src->nChannels;
+    int step = src->widthStep;
+    int i, j, k;
+
+    for(i = 0; i < h; ++i){
+        for(k= 0; k < c; ++k){
+            for(j = 0; j < w; ++j){
+                im.data[k*w*h + i*w + j] = data[i*step + j*c + k]/255.;
+            }
+        }
+    }
+}
+
+image ipl_to_image(IplImage* src)
+{
+    int h = src->height;
+    int w = src->width;
+    int c = src->nChannels;
+    image out = make_image(w, h, c);
+    ipl_into_image(src, out);
+    return out;
+}
 
 extern "C" cv::Mat image_to_mat(image img)
 {
