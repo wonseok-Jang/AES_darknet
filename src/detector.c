@@ -1851,7 +1851,7 @@ void aes_test_detector(char *datacfg, char *cfgfile, char *weightfile, char *fil
             car_cnt cnts;
 			int check_tracking_status;
 
-			check_tracking_status = draw_tracking_detections(im, gt_input, dets, nboxes, thresh, names, alphabet, l.classes, &cnts, txt_path, fr_cnt);
+			check_tracking_status = draw_detections_with_tracking(im, gt_input, dets, nboxes, thresh, names, alphabet, l.classes, &cnts, txt_path, fr_cnt);
 			if(check_tracking_status == -1) {
 				perror("Error in tracking");
 				exit(0);
@@ -2154,7 +2154,7 @@ void run_detector(int argc, char **argv)
         if (strlen(weights) > 0)
             if (weights[strlen(weights) - 1] == 0x0d) weights[strlen(weights) - 1] = 0;
     char *filename = (argc > 6) ? argv[6] : 0;
-    if(0==strcmp(argv[2], "aes_test")) aes_test_detector(datacfg, cfg, weights, filename, thresh, hier_thresh, outfile, fullscreen, letter_box,gt_path, txtpath);
+    if(0==strcmp(argv[2], "aes_test")) aes_test_detector(datacfg, cfg, weights, filename, thresh, hier_thresh, outfile, fullscreen, letter_box, gt_path, txtpath);
     if (0 == strcmp(argv[2], "test")) test_detector(datacfg, cfg, weights, filename, thresh, hier_thresh, dont_show, ext_output, save_labels, outfile, letter_box, benchmark_layers);
     else if (0 == strcmp(argv[2], "train")) train_detector(datacfg, cfg, weights, gpus, ngpus, clear, dont_show, calc_map, mjpeg_port, show_imgs, benchmark_layers, chart_path);
     else if (0 == strcmp(argv[2], "valid")) validate_detector(datacfg, cfg, weights, outfile);

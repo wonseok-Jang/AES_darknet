@@ -432,7 +432,7 @@ int compute_iou(char *gt, int pred_xmin, int pred_ybot, int pred_xmax, int pred_
     return ok_cnt;
 }
 
-int draw_tracking_detections(image im, char *gt_input, detection *dets, int num, float thresh, char **names, image **alphabet, int classes, car_cnt *cnts, char *txt_path, int frame_count)
+int draw_detections_with_tracking(image im, char *gt_input, detection *dets, int num, float thresh, char **names, image **alphabet, int classes, car_cnt *cnts, char *txt_path, int frame_count)
 {
     bool txt_flag=false;
     FILE* fw1;
